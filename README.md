@@ -16,9 +16,7 @@ This bot uses Mineflayer and connects as a separate offline-mode Minecraft usern
 
 ### Important cracked-mode security limitation
 
-In offline/cracked mode, Minecraft does not cryptographically prove that a player owns a username. A different person can join using an MVP's name. Therefore, the in-game MVP username allowlist is only a convenience filter, **not secure identity verification**. A secure MVP-only gate requires an existing authentication/identity system already on the server (for example, a login plugin that players already use) or a separate verified website login. Do not treat username-only checks as secure for private data or admin/economy actions. This bot has no permission to grant ranks or change coins.
-
-If the server has an existing login plugin and the bot must authenticate, set `MC_LOGIN_PASSWORD` as a secret environment variable. Never put it in GitHub.
+In offline/cracked mode, Minecraft does not cryptographically prove that a player owns a username. A different person can join using an MVP's name. Therefore, the in-game MVP username allowlist is only a convenience filter, **not secure identity verification**. A secure MVP-only gate requires an existing authentication/identity system already on the server (for example, a login plugin that players already use) or a separate verified website login. Do not treat username-only checks as secure for private data or admin/economy actions. This bot has no permission to grant ranks or change coins. It does not send `/login` passwords in public chat.
 
 ## Website AI (MVP-only)
 
