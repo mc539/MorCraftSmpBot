@@ -13,6 +13,18 @@ services:
         sync: false
       - key: GEMINI_MODEL
         value: gemini-2.5-flash
+      - key: MC_BOT_ENABLED
+        value: "true"
+      - key: MC_HOST
+        value: MorCraftSmp.aternos.me
+      - key: MC_PORT
+        value: "64006"
+      - key: MC_USERNAME
+        value: MorCraftAi
+      - key: MC_VERSION
+        value: 1.21.4
+      - key: MC_ECONOMY_TIMEOUT_MS
+        value: "8000"
       - key: DISCORD_BOT_TOKEN
         sync: false
       - key: DISCORD_CHANNEL_ID
