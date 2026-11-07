@@ -113,6 +113,43 @@ const mcVersion = process.env.MC_VERSION || "1.21.4";
 const mvpNames = new Set((process.env.MVP_USERNAMES || "")
   .split(",").map(x => x.trim().toLowerCase()).filter(Boolean));
 const lastMinecraftRequest = new Map();
+const minecraftRequestsInFlight = new Set();
+const aiQuestionCost = 1000;
+const economyTimeoutMs = Number(process.env.MC_ECONOMY_TIMEOUT_MS || 8000);
+const economySuccessPattern = new RegExp(
+  process.env.MC_ECO_SUCCESS_REGEX || "(?:took|removed|deducted|withdrawn|alındı|çekildi|kaldırıldı|düşüldü|çıkarıldı)",
+  "i"
+);
+const economyFailurePattern = new RegExp(
+  process.env.MC_ECO_FAILURE_REGEX || "(?:not enough|insufficient|cannot take|does not have|no permission|you do not have permission|yeterli değil|yetkin yok|iznin yok|izin yok|bakiye yetersiz)",
+  "i"
+);
+
+function debitMinecraftPlayer(username, amount) {
+  return new Promise(resolve => {
+    if (!mcBot || !mcBot.player) return resolve({ ok: false, reason: "Bot sunucuya bağlı değil." });
+    let settled = false;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      mcBot.removeListener("messagestr", onMessage);
+      resolve(result);
+    };
+    const onMessage = message => {
+      const line = String(message || "");
+      if (!line.toLowerCase().includes(username.toLowerCase())) return;
+      if (economyFailurePattern.test(line)) return finish({ ok: false, reason: "Bakiye yetersiz veya ekonomi komutu için bot yetkili değil." });
+      if (economySuccessPattern.test(line)) return finish({ ok: true });
+    };
+    const timer = setTimeout(() => finish({
+      ok: false,
+      reason: "Ekonomi kesintisi sunucu mesajından doğrulanamadı."
+    }), economyTimeoutMs);
+    mcBot.on("messagestr", onMessage);
+    mcBot.chat(`/eco take ${username} ${amount}`);
+  });
+}
 
 if (process.env.MC_BOT_ENABLED === "true" && mcHost && mcUsername && mvpNames.size > 0) {
   console.log(`Starting offline Minecraft bot ${mcUsername} -> ${mcHost}:${mcPort} (${mcVersion})`);
@@ -132,28 +169,39 @@ if (process.env.MC_BOT_ENABLED === "true" && mcHost && mcUsername && mvpNames.si
 
   mcBot.on("chat", async (username, message) => {
     if (!username || username.toLowerCase() === mcUsername.toLowerCase()) return;
-    const match = message.match(/^!ai\s+([\s\S]+)/i);
+    const match = message.match(/^!ai\\s+([\\s\\S]+)/i);
     if (!match) return;
-    if (!mvpNames.has(username.toLowerCase())) {
-      mcBot.chat(`@${username} Yapay zekâ yalnızca MVP oyuncularına açıktır.`);
+    if (!/^[a-zA-Z0-9_]{1,16}$/.test(username)) return;
+    const playerKey = username.toLowerCase();
+    if (minecraftRequestsInFlight.has(playerKey)) {
+      mcBot.chat(`@${username} Sorun zaten işleniyor, lütfen bekle.`);
       return;
     }
     const now = Date.now();
-    const last = lastMinecraftRequest.get(username.toLowerCase()) || 0;
+    const last = lastMinecraftRequest.get(playerKey) || 0;
     if (now - last < 15_000) {
-      mcBot.chat(`@${username} Bir sonraki sorunu göndermeden önce biraz bekle.`);
+      mcBot.chat(`@${username} Yeni soru için 15 saniye beklemelisin.`);
       return;
     }
-    lastMinecraftRequest.set(username.toLowerCase(), now);
     const question = cleanText(match[1], 700);
     if (!question) return;
+    minecraftRequestsInFlight.add(playerKey);
     try {
-      const answer = await askGemini(`minecraft:${username.toLowerCase()}`, question);
-      // Keep the reply within Minecraft chat's practical length.
-      mcBot.chat(`@${username} ${answer.replace(/[\r\n]+/g, " ").slice(0, 220)}`);
+      // Generate first so players are not charged if the AI service is unavailable.
+      const answer = await askGemini(`minecraft:${playerKey}`, question);
+      const debit = await debitMinecraftPlayer(username, aiQuestionCost);
+      if (!debit.ok) {
+        sessions.delete(`minecraft:${playerKey}`);
+        mcBot.chat(`@${username} 1.000 oyun parası alınamadı. ${debit.reason}`);
+        return;
+      }
+      lastMinecraftRequest.set(playerKey, Date.now());
+      mcBot.chat(`@${username} 1.000 oyun parası kesildi. ${answer.replace(/[\\r\\n]+/g, " ").slice(0, 180)}`);
     } catch (error) {
       console.error("Minecraft AI request failed:", error?.message || "unknown error");
-      mcBot.chat(`@${username} Şu anda cevap veremiyorum, sonra tekrar dene.`);
+      mcBot.chat(`@${username} Şu anda cevap veremiyorum; ücret alınmadı.`);
+    } finally {
+      minecraftRequestsInFlight.delete(playerKey);
     }
   });
 
