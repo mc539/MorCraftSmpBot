@@ -41,10 +41,23 @@ A Minecraft connection is a persistent TCP connection. Render's free web instanc
 
 See `.env.example`. Never commit API keys, bot credentials, login passwords, or MVP access tokens.
 
+## Website coin store (VIP / MVP / VIP+)
+
+The GitHub Pages frontend is served from `index.html`. Players enter their Minecraft username, receive a short-lived code, and verify ownership in server chat with `!site CODE`. After verification, the website offers:
+
+| Rank | In-game price | LuckPerms group |
+|---|---:|---|
+| VIP | 30,000 coins | `vip` |
+| MVP | 60,000 coins | `mvp` |
+| VIP+ | 100,000 coins | `vip+` |
+
+A purchase asks the connected Minecraft bot to run `/eco take PLAYER PRICE`. Only after the economy success message is detected does it run `/lp user PLAYER parent set GROUP`. If the LuckPerms command is not confirmed, the bot attempts to refund the coins. Test the exact messages and LuckPerms group names on a test account before announcing the store.
+
+The frontend calls the Render API at `https://morcraftsmp-ai.onrender.com`. Set `WEBSITE_ORIGIN=https://mc539.github.io` in Render if you want to restrict browser requests to the GitHub Pages origin. Keep all API keys and server secrets in Render environment variables, never in the website source.
+
+**Important:** the current implementation keeps link challenges and sessions in process memory. A service restart clears them. Render free instances can sleep, and the Minecraft bot must be connected to an already-online Aternos server for purchases to work. This does not keep Aternos online.
+
 ## Still not implemented
 
-- Automated rank sales / coin deductions
 - Admin panel and admin permissions
-- Website frontend chat UI and per-MVP token distribution
-
-Economy integration must wait until the exact economy and permissions plugins are known.
+- Website AI frontend and individual MVP token distribution
