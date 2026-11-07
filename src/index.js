@@ -22,6 +22,7 @@ const systemInstruction = process.env.BOT_SYSTEM_PROMPT ||
 
 const app = express();
 app.disable("x-powered-by");
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "20kb" }));
 const allowedOrigins = (process.env.WEBSITE_ORIGIN || "")
   .split(",").map(x => x.trim()).filter(Boolean);
@@ -320,7 +321,8 @@ function startMinecraftBot() {
   });
 
   bot.on("kicked", reason => {
-    botLastError = cleanText(String(reason), 240);
+    botLastError = cleanText(typeof reason === "string" ? reason : JSON.stringify(reason), 240);
+    botState = "offline";
     console.warn("Minecraft bot kicked:", botLastError);
   });
   bot.on("error", error => {
@@ -346,8 +348,8 @@ const botStartLimiter = rateLimit({
 });
 app.get("/api/bot/status", (_req, res) => {
   res.json({
-    state: mcBot?.player ? "online" : botState,
-    connected: Boolean(mcBot?.player),
+    state: botState,
+    connected: botState === "online" && Boolean(mcBot?.player),
     lastError: botLastError || null
   });
 });
@@ -367,7 +369,7 @@ if (process.env.MC_BOT_ENABLED === "true") {
   startMinecraftBot();
   botRetryTimer = setInterval(() => {
     if (!mcBot && botState !== "connecting") startMinecraftBot();
-  }, 30_000);
+  }, 60_000);
 }
 
 let discord;
