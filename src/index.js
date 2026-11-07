@@ -169,7 +169,7 @@ if (process.env.MC_BOT_ENABLED === "true" && mcHost && mcUsername) {
 
   mcBot.on("chat", async (username, message) => {
     if (!username || username.toLowerCase() === mcUsername.toLowerCase()) return;
-    const match = message.match(/^!ai\\s+([\\s\\S]+)/i);
+    const match = message.match(/^!ai\s+([\s\S]+)/i);
     if (!match) return;
     if (!/^[a-zA-Z0-9_]{1,16}$/.test(username)) return;
     const playerKey = username.toLowerCase();
@@ -196,7 +196,7 @@ if (process.env.MC_BOT_ENABLED === "true" && mcHost && mcUsername) {
         return;
       }
       lastMinecraftRequest.set(playerKey, Date.now());
-      mcBot.chat(`@${username} 1.000 oyun parası kesildi. ${answer.replace(/[\\r\\n]+/g, " ").slice(0, 180)}`);
+      mcBot.chat(`@${username} 1.000 oyun parası kesildi. ${answer.replace(/[\r\n]+/g, " ").slice(0, 180)}`);
     } catch (error) {
       console.error("Minecraft AI request failed:", error?.message || "unknown error");
       mcBot.chat(`@${username} Şu anda cevap veremiyorum; ücret alınmadı.`);
