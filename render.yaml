@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: morcraftsmp-ai
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_CHANNEL_ID
+        sync: false
+      - key: WEBSITE_ORIGIN
+        sync: false
+      - key: WEB_CHAT_PER_MINUTE
+        value: 8
