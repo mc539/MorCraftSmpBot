@@ -151,7 +151,7 @@ function debitMinecraftPlayer(username, amount) {
   });
 }
 
-if (process.env.MC_BOT_ENABLED === "true" && mcHost && mcUsername && mvpNames.size > 0) {
+if (process.env.MC_BOT_ENABLED === "true" && mcHost && mcUsername) {
   console.log(`Starting offline Minecraft bot ${mcUsername} -> ${mcHost}:${mcPort} (${mcVersion})`);
   mcBot = mineflayer.createBot({
     host: mcHost,
@@ -209,7 +209,7 @@ if (process.env.MC_BOT_ENABLED === "true" && mcHost && mcUsername && mvpNames.si
   mcBot.on("error", error => console.error("Minecraft bot error:", error?.message || "unknown error"));
   mcBot.on("end", reason => console.warn("Minecraft bot disconnected:", reason || "connection ended"));
 } else {
-  console.log("Minecraft bot disabled. Set MC_BOT_ENABLED=true, MC_HOST, MC_USERNAME and MVP_USERNAMES to enable.");
+  console.log("Minecraft bot disabled. Set MC_BOT_ENABLED=true, MC_HOST and MC_USERNAME to enable.");
 }
 
 let discord;
