@@ -85,6 +85,87 @@ async function askGemini(sessionId, message) {
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "morcraftsmp-ai" }));
 
+const storeProducts = {
+  vip: { name: "VIP", price: 30000, group: "vip" },
+  mvp: { name: "MVP", price: 60000, group: "mvp" },
+  "vip-plus": { name: "VIP+", price: 100000, group: "vip+" }
+};
+const linkChallenges = new Map();
+const storeSessions = new Map();
+const storeBusy = new Set();
+function validPlayerName(value) { return typeof value === "string" && /^[a-zA-Z0-9_]{1,16}$/.test(value); }
+function makeLinkCode() { return crypto.randomBytes(4).toString("hex").slice(0, 6).toUpperCase(); }
+function runMinecraftCommand(command, successRegex, failureRegex) {
+  return new Promise(resolve => {
+    if (!mcBot || !mcBot.player) return resolve({ ok: false, reason: "Minecraft botu sunucuya bağlı değil." });
+    let settled = false;
+    const finish = result => { if (settled) return; settled = true; clearTimeout(timer); mcBot.removeListener("messagestr", onMessage); resolve(result); };
+    const onMessage = message => { const line = String(message || ""); if (failureRegex.test(line)) return finish({ ok: false, reason: line.slice(0, 180) }); if (successRegex.test(line)) return finish({ ok: true, message: line.slice(0, 180) }); };
+    const timer = setTimeout(() => finish({ ok: false, reason: "Sunucu komut sonucu zamanında doğrulanamadı." }), economyTimeoutMs);
+    mcBot.on("messagestr", onMessage);
+    mcBot.chat(command);
+  });
+}
+const lpSuccess = new RegExp(process.env.LP_SUCCESS_REGEX || "(?:successfully|success|başarıyla|başarılı)", "i");
+const lpFailure = new RegExp(process.env.LP_FAILURE_REGEX || "(?:error|unknown group|does not exist|not found|no permission|yetkin yok|izin yok|hata)", "i");
+
+app.post("/api/store/link/start", (req, res) => {
+  const username = cleanText(req.body?.username, 16);
+  if (!validPlayerName(username)) return res.status(400).json({ error: "Geçerli Minecraft kullanıcı adı gir." });
+  const code = makeLinkCode();
+  linkChallenges.set(code, { username: username.toLowerCase(), expires: Date.now() + 5 * 60_000, verified: false });
+  return res.json({ code, expiresInSeconds: 300 });
+});
+app.get("/api/store/link/status", (req, res) => {
+  const code = cleanText(req.query?.code, 6).toUpperCase();
+  const challenge = linkChallenges.get(code);
+  if (!/^[A-Z0-9]{6}$/.test(code) || !challenge || challenge.expires < Date.now()) {
+    linkChallenges.delete(code);
+    return res.status(404).json({ error: "Kod bulunamadı veya süresi doldu. Yeni kod oluştur." });
+  }
+  if (!challenge.verified) return res.json({ verified: false });
+  if (!challenge.sessionToken) {
+    challenge.sessionToken = crypto.randomBytes(32).toString("hex");
+    storeSessions.set(challenge.sessionToken, { username: challenge.username, expires: Date.now() + 15 * 60_000 });
+  }
+  return res.json({ verified: true, sessionToken: challenge.sessionToken, username: challenge.username });
+});
+app.post("/api/store/purchase", async (req, res) => {
+  const token = cleanText(req.body?.sessionToken, 100);
+  const productId = cleanText(req.body?.product, 30);
+  const session = storeSessions.get(token);
+  const product = storeProducts[productId];
+  if (!session || session.expires < Date.now()) return res.status(401).json({ error: "Site bağlantın geçersiz. Oyunda yeniden doğrula." });
+  if (!product) return res.status(400).json({ error: "Geçersiz ürün." });
+  const username = session.username;
+  if (storeBusy.has(username)) return res.status(409).json({ error: "Bir satın alma işlemin zaten devam ediyor." });
+  if (!mcBot || !mcBot.player) return res.status(503).json({ error: "Minecraft botu şu anda sunucuya bağlı değil." });
+  storeBusy.add(username);
+  try {
+    const debit = await runMinecraftCommand(
+      `/eco take ${username} ${product.price}`,
+      new RegExp(process.env.MC_ECO_SUCCESS_REGEX || "(?:took|removed|deducted|withdrawn|alındı|çekildi|kaldırıldı|düşüldü|çıkarıldı)", "i"),
+      new RegExp(process.env.MC_ECO_FAILURE_REGEX || "(?:not enough|insufficient|cannot take|does not have|no permission|you do not have permission|yeterli değil|yetkin yok|iznin yok|izin yok|bakiye yetersiz)", "i")
+    );
+    if (!debit.ok) return res.status(400).json({ error: "Coin kesintisi yapılamadı: " + debit.reason });
+    const rank = await runMinecraftCommand(`/lp user ${username} parent set ${product.group}`, lpSuccess, lpFailure);
+    if (!rank.ok) {
+      const refund = await runMinecraftCommand(
+        `/eco give ${username} ${product.price}`,
+        new RegExp(process.env.MC_ECO_REFUND_REGEX || "(?:gave|added|received|eklendi|verildi|başarıyla)", "i"),
+        new RegExp(process.env.MC_ECO_FAILURE_REGEX || "(?:error|no permission|yetkin yok|izin yok|hata)", "i")
+      );
+      console.error("LuckPerms rank command not confirmed; refund result:", refund.ok, rank.reason);
+      return res.status(502).json({ error: refund.ok ? "Rütbe verilemedi; oyun paran iade edildi." : "Rütbe ve iade işlemi doğrulanamadı. Yetkiliyle iletişime geç." });
+    }
+    return res.json({ ok: true, message: product.name + " rütben başarıyla verildi!", product: product.name, price: product.price });
+  } catch (error) {
+    console.error("Store purchase failed:", error?.message || "unknown error");
+    return res.status(500).json({ error: "Satın alma sırasında beklenmeyen hata oluştu." });
+  } finally { storeBusy.delete(username); }
+});
+
+
 // Website AI is MVP-only. Each MVP receives an individual token stored server-side.
 app.post("/api/chat", chatLimiter, async (req, res) => {
   const username = cleanText(req.body?.username, 32);
@@ -169,6 +250,18 @@ if (process.env.MC_BOT_ENABLED === "true" && mcHost && mcUsername) {
 
   mcBot.on("chat", async (username, message) => {
     if (!username || username.toLowerCase() === mcUsername.toLowerCase()) return;
+    const linkMatch = message.match(/^!site\\s+([A-Z0-9]{6})$/i);
+    if (linkMatch) {
+      const code = linkMatch[1].toUpperCase();
+      const challenge = linkChallenges.get(code);
+      if (challenge && challenge.expires >= Date.now() && challenge.username === username.toLowerCase()) {
+        challenge.verified = true;
+        mcBot.chat(`@${username} Site bağlantın doğrulandı. Web sitesine dönüp bekle.`);
+      } else {
+        mcBot.chat(`@${username} Bağlantı kodu geçersiz, süresi dolmuş veya kullanıcı adı eşleşmiyor.`);
+      }
+      return;
+    }
     const match = message.match(/^!ai\s+([\s\S]+)/i);
     if (!match) return;
     if (!/^[a-zA-Z0-9_]{1,16}$/.test(username)) return;
