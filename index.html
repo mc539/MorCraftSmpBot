@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MorCraftSmp | Mağaza</title>
+<style>
+:root{color-scheme:dark;--bg:#090b16;--panel:#151a2c;--purple:#8b5cf6;--pink:#ec4899;--muted:#aab1c5}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,sans-serif;background:radial-gradient(ellipse at top,#29204b 0,#090b16 55%);color:#f7f7ff;min-height:100vh}
+header{padding:26px 7%;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #ffffff18}header b{font-size:22px;letter-spacing:1px}header span{color:#c4b5fd}
+main{max-width:1050px;margin:60px auto;padding:0 22px}.hero{text-align:center;margin-bottom:38px}.hero h1{font-size:clamp(34px,6vw,58px);margin:0 0 12px}.hero p{color:var(--muted);margin:0}
+.panel{background:#111629eF;border:1px solid #ffffff1c;border-radius:20px;padding:24px;box-shadow:0 20px 70px #0006;margin-bottom:22px}
+label{display:block;font-weight:650;margin-bottom:8px}input{width:100%;padding:14px 15px;border-radius:11px;border:1px solid #ffffff30;background:#090e1d;color:white;font-size:16px}
+button{border:0;border-radius:11px;padding:13px 18px;background:linear-gradient(110deg,var(--purple),var(--pink));color:white;font-weight:750;font-size:15px;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}
+#linkBtn{margin-top:12px;width:100%}.hint,.status{color:var(--muted);font-size:14px;line-height:1.6}.code{font-size:30px;letter-spacing:7px;text-align:center;color:#c4b5fd;font-weight:850;margin:14px}
+.products{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.product{background:linear-gradient(155deg,#202744,#12182a);border:1px solid #ffffff20;border-radius:18px;padding:22px;text-align:center}.product .icon{font-size:38px}.product h2{margin:8px 0}.price{font-size:25px;font-weight:850;color:#c4b5fd;margin:14px 0}.product button{width:100%}
+footer{text-align:center;color:#737d98;padding:28px;font-size:13px}
+@media(max-width:700px){.products{grid-template-columns:1fr}main{margin:35px auto}.panel{padding:18px}}
+</style></head>
+<body>
+<header><b>💜 MorCraft<span>Smp</span></b><span>OYUN İÇİ MAĞAZA</span></header>
+<main>
+<section class="hero"><h1>Rütbeni yükselt.</h1><p>Gerçek para yok. Alışverişler oyun içi coin bakiyenle yapılır.</p></section>
+<section class="panel">
+<h2>1. Minecraft hesabını bağla</h2>
+<label for="username">Minecraft kullanıcı adın</label><input id="username" maxlength="16" placeholder="OyuncuAdı" autocomplete="off">
+<button id="linkBtn">Bağlantı kodu oluştur</button>
+<div id="linkStatus" class="status" aria-live="polite">Kod oluşturduktan sonra sunucuda <b>!site KOD</b> yaz.</div>
+<div id="code" class="code" hidden></div>
+</section>
+<section class="panel"><h2>2. Rütbeni seç</h2><p class="hint">Satın alma butonları hesabın oyun içinden doğrulandıktan sonra açılır.</p>
+<div class="products">
+<article class="product"><div class="icon">⚔️</div><h2>VIP</h2><div class="price">30.000 coin</div><button data-product="vip" disabled>Satın al</button></article>
+<article class="product"><div class="icon">💎</div><h2>MVP</h2><div class="price">60.000 coin</div><button data-product="mvp" disabled>Satın al</button></article>
+<article class="product"><div class="icon">👑</div><h2>VIP+</h2><div class="price">100.000 coin</div><button data-product="vip-plus" disabled>Satın al</button></article>
+</div><p id="purchaseStatus" class="status" aria-live="polite"></p>
+</section>
+</main><footer>MorCraftSmp • Satın alımlar yalnızca oyun içi para ile yapılır.</footer>
+<script>
+const API = "https://morcraftsmp-ai.onrender.com";
+const $ = id => document.getElementById(id);
+let sessionToken = "";
+function setEnabled(enabled){document.querySelectorAll("[data-product]").forEach(b=>b.disabled=!enabled)}
+$("linkBtn").addEventListener("click",async()=>{
+ const username=$("username").value.trim();
+ if(!/^[a-zA-Z0-9_]{1,16}$/.test(username)){ $("linkStatus").textContent="Geçerli bir Minecraft kullanıcı adı yaz.";return;}
+ $("linkBtn").disabled=true;$("linkStatus").textContent="Kod oluşturuluyor...";
+ try{
+  const r=await fetch(API+"/api/store/link/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username})});
+  const data=await r.json();if(!r.ok)throw new Error(data.error||"Kod oluşturulamadı.");
+  $("code").hidden=false;$("code").textContent=data.code;
+  $("linkStatus").innerHTML='Minecraft sunucusunda sohbete <b>!site '+data.code+'</b> yaz. Kod 5 dakika geçerli.';
+  const code=data.code;const deadline=Date.now()+300000;
+  const poll=async()=>{if(Date.now()>deadline)return;
+   const check=await fetch(API+"/api/store/link/status?code="+encodeURIComponent(code));const state=await check.json();
+   if(state.verified){sessionToken=state.sessionToken;setEnabled(true);$("linkStatus").textContent=state.username+" hesabı bağlandı. Artık rütbe satın alabilirsin.";return;}
+   setTimeout(poll,2500);
+  };poll();
+ }catch(e){$("linkStatus").textContent=e.message;}finally{$("linkBtn").disabled=false;}
+});
+document.querySelectorAll("[data-product]").forEach(button=>button.addEventListener("click",async()=>{
+ if(!sessionToken)return;
+ button.disabled=true;$("purchaseStatus").textContent="Satın alma işleniyor; lütfen bekle...";
+ try{
+  const r=await fetch(API+"/api/store/purchase",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sessionToken,product:button.dataset.product})});
+  const data=await r.json();if(!r.ok)throw new Error(data.error||"Satın alma başarısız.");
+  $("purchaseStatus").textContent=data.message+" ("+data.price.toLocaleString("tr-TR")+" coin)";
+ }catch(e){$("purchaseStatus").textContent=e.message;}finally{setEnabled(true);}
+}));
+</script></body></html>
