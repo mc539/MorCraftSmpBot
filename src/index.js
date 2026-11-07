@@ -128,9 +128,6 @@ if (process.env.MC_BOT_ENABLED === "true" && mcHost && mcUsername && mvpNames.si
   mcBot.once("login", () => console.log("Minecraft bot logged in."));
   mcBot.once("spawn", () => {
     console.log("Minecraft bot spawned in the world.");
-    if (process.env.MC_LOGIN_PASSWORD) {
-      setTimeout(() => mcBot?.chat(`/login ${process.env.MC_LOGIN_PASSWORD}`), 1500);
-    }
   });
 
   mcBot.on("chat", async (username, message) => {
