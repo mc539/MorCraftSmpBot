@@ -1,0 +1,21 @@
+{
+  "name": "morcraftsmp-ai-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google/genai": "^1.11.0",
+    "cors": "^2.8.5",
+    "discord.js": "^14.22.1",
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.1.0"
+  }
+}
