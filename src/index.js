@@ -184,9 +184,13 @@ app.post("/api/chat", chatLimiter, async (req, res) => {
   }
 });
 
-// Minecraft bot: joins only when explicitly configured. No anti-AFK movement and no
-// automatic reconnect are implemented; it must never be used to keep an Aternos server online.
-let mcBot;
+// Minecraft bot lifecycle. Reconnect attempts only establish a normal connection;
+// they do not move the player or try to keep an Aternos server awake.
+let mcBot = null;
+let botState = "stopped";
+let botLastError = "";
+let botRetryTimer = null;
+let botNextAttemptAt = 0;
 const mcHost = cleanText(process.env.MC_HOST, 255);
 const mcUsername = cleanText(process.env.MC_USERNAME, 16);
 const mcPort = Number(process.env.MC_PORT || 25565);
@@ -209,12 +213,13 @@ const economyFailurePattern = new RegExp(
 function debitMinecraftPlayer(username, amount) {
   return new Promise(resolve => {
     if (!mcBot || !mcBot.player) return resolve({ ok: false, reason: "Bot sunucuya bağlı değil." });
+    const activeBot = mcBot;
     let settled = false;
     const finish = result => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      mcBot.removeListener("messagestr", onMessage);
+      activeBot.removeListener("messagestr", onMessage);
       resolve(result);
     };
     const onMessage = message => {
@@ -227,82 +232,142 @@ function debitMinecraftPlayer(username, amount) {
       ok: false,
       reason: "Ekonomi kesintisi sunucu mesajından doğrulanamadı."
     }), economyTimeoutMs);
-    mcBot.on("messagestr", onMessage);
-    mcBot.chat(`/eco take ${username} ${amount}`);
+    activeBot.on("messagestr", onMessage);
+    activeBot.chat(`/eco take ${username} ${amount}`);
   });
 }
 
-if (process.env.MC_BOT_ENABLED === "true" && mcHost && mcUsername) {
-  console.log(`Starting offline Minecraft bot ${mcUsername} -> ${mcHost}:${mcPort} (${mcVersion})`);
-  mcBot = mineflayer.createBot({
-    host: mcHost,
-    port: mcPort,
-    username: mcUsername,
-    auth: "offline",
-    version: mcVersion,
-    hideErrors: false
+function startMinecraftBot() {
+  if (!mcHost || !mcUsername) {
+    botState = "disabled";
+    botLastError = "Minecraft sunucu bilgileri yapılandırılmamış.";
+    return false;
+  }
+  if (mcBot && (botState === "connecting" || botState === "online")) return true;
+
+  botState = "connecting";
+  botLastError = "";
+  console.log(`Connecting offline Minecraft bot ${mcUsername} -> ${mcHost}:${mcPort} (${mcVersion})`);
+  let bot;
+  try {
+    bot = mineflayer.createBot({
+      host: mcHost, port: mcPort, username: mcUsername,
+      auth: "offline", version: mcVersion, hideErrors: false
+    });
+  } catch (error) {
+    botState = "offline";
+    botLastError = cleanText(error?.message || "Bot başlatılamadı.", 240);
+    return false;
+  }
+  mcBot = bot;
+
+  bot.once("login", () => {
+    if (mcBot !== bot) return;
+    botState = "online";
+    botLastError = "";
+    console.log("Minecraft bot logged in.");
+  });
+  bot.once("spawn", () => {
+    if (mcBot === bot) console.log("Minecraft bot spawned in the world.");
   });
 
-  mcBot.once("login", () => console.log("Minecraft bot logged in."));
-  mcBot.once("spawn", () => {
-    console.log("Minecraft bot spawned in the world.");
-  });
-
-  mcBot.on("chat", async (username, message) => {
-    if (!username || username.toLowerCase() === mcUsername.toLowerCase()) return;
-    const linkMatch = message.match(/^!site\\s+([A-Z0-9]{6})$/i);
+  bot.on("chat", async (username, message) => {
+    if (!username || username.toLowerCase() === mcUsername.toLowerCase() || mcBot !== bot) return;
+    const linkMatch = message.match(/^!site\s+([A-Z0-9]{6})$/i);
     if (linkMatch) {
       const code = linkMatch[1].toUpperCase();
       const challenge = linkChallenges.get(code);
       if (challenge && challenge.expires >= Date.now() && challenge.username === username.toLowerCase()) {
         challenge.verified = true;
-        mcBot.chat(`@${username} Site bağlantın doğrulandı. Web sitesine dönüp bekle.`);
+        bot.chat(`@${username} Site bağlantın doğrulandı. Web sitesine dönüp bekle.`);
       } else {
-        mcBot.chat(`@${username} Bağlantı kodu geçersiz, süresi dolmuş veya kullanıcı adı eşleşmiyor.`);
+        bot.chat(`@${username} Bağlantı kodu geçersiz, süresi dolmuş veya kullanıcı adı eşleşmiyor.`);
       }
       return;
     }
     const match = message.match(/^!ai\s+([\s\S]+)/i);
-    if (!match) return;
-    if (!/^[a-zA-Z0-9_]{1,16}$/.test(username)) return;
+    if (!match || !/^[a-zA-Z0-9_]{1,16}$/.test(username)) return;
     const playerKey = username.toLowerCase();
     if (minecraftRequestsInFlight.has(playerKey)) {
-      mcBot.chat(`@${username} Sorun zaten işleniyor, lütfen bekle.`);
+      bot.chat(`@${username} Sorun zaten işleniyor, lütfen bekle.`);
       return;
     }
     const now = Date.now();
     const last = lastMinecraftRequest.get(playerKey) || 0;
     if (now - last < 15_000) {
-      mcBot.chat(`@${username} Yeni soru için 15 saniye beklemelisin.`);
+      bot.chat(`@${username} Yeni soru için 15 saniye beklemelisin.`);
       return;
     }
     const question = cleanText(match[1], 700);
     if (!question) return;
     minecraftRequestsInFlight.add(playerKey);
     try {
-      // Generate first so players are not charged if the AI service is unavailable.
       const answer = await askGemini(`minecraft:${playerKey}`, question);
       const debit = await debitMinecraftPlayer(username, aiQuestionCost);
       if (!debit.ok) {
         sessions.delete(`minecraft:${playerKey}`);
-        mcBot.chat(`@${username} 1.000 oyun parası alınamadı. ${debit.reason}`);
+        if (mcBot === bot && bot.player) bot.chat(`@${username} 1.000 oyun parası alınamadı. ${debit.reason}`);
         return;
       }
       lastMinecraftRequest.set(playerKey, Date.now());
-      mcBot.chat(`@${username} 1.000 oyun parası kesildi. ${answer.replace(/[\r\n]+/g, " ").slice(0, 180)}`);
+      if (mcBot === bot && bot.player) bot.chat(`@${username} 1.000 oyun parası kesildi. ${answer.replace(/[\r\n]+/g, " ").slice(0, 180)}`);
     } catch (error) {
       console.error("Minecraft AI request failed:", error?.message || "unknown error");
-      mcBot.chat(`@${username} Şu anda cevap veremiyorum; ücret alınmadı.`);
+      if (mcBot === bot && bot.player) bot.chat(`@${username} Şu anda cevap veremiyorum; ücret alınmadı.`);
     } finally {
       minecraftRequestsInFlight.delete(playerKey);
     }
   });
 
-  mcBot.on("kicked", reason => console.warn("Minecraft bot kicked:", String(reason).slice(0, 300)));
-  mcBot.on("error", error => console.error("Minecraft bot error:", error?.message || "unknown error"));
-  mcBot.on("end", reason => console.warn("Minecraft bot disconnected:", reason || "connection ended"));
-} else {
-  console.log("Minecraft bot disabled. Set MC_BOT_ENABLED=true, MC_HOST and MC_USERNAME to enable.");
+  bot.on("kicked", reason => {
+    botLastError = cleanText(String(reason), 240);
+    console.warn("Minecraft bot kicked:", botLastError);
+  });
+  bot.on("error", error => {
+    botLastError = cleanText(error?.message || "Minecraft bağlantı hatası", 240);
+    console.error("Minecraft bot error:", botLastError);
+  });
+  bot.on("end", reason => {
+    console.warn("Minecraft bot disconnected:", reason || "connection ended");
+    if (mcBot === bot) {
+      mcBot = null;
+      botState = "offline";
+    }
+  });
+  return true;
+}
+
+const botStartLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 2,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: "Çok sık başlatma isteği gönderildi. Bir dakika sonra tekrar dene." }
+});
+app.get("/api/bot/status", (_req, res) => {
+  res.json({
+    state: mcBot?.player ? "online" : botState,
+    connected: Boolean(mcBot?.player),
+    lastError: botLastError || null
+  });
+});
+app.post("/api/bot/start", botStartLimiter, (_req, res) => {
+  if (!mcHost || !mcUsername) return res.status(503).json({ error: "Bot ayarları henüz tamamlanmamış." });
+  if (mcBot?.player) return res.json({ ok: true, state: "online", message: "Bot zaten sunucuda." });
+  if (botState === "connecting") return res.json({ ok: true, state: "connecting", message: "Bot zaten bağlanmayı deniyor." });
+  const ok = startMinecraftBot();
+  return ok
+    ? res.status(202).json({ ok: true, state: "connecting", message: "Bot sunucuya bağlanmayı deniyor." })
+    : res.status(503).json({ error: botLastError || "Bot başlatılamadı." });
+});
+
+// Retry normal connection every 30 seconds while the service is running.
+// This lets the bot join after the owner manually starts the Aternos server.
+if (process.env.MC_BOT_ENABLED === "true") {
+  startMinecraftBot();
+  botRetryTimer = setInterval(() => {
+    if (!mcBot && botState !== "connecting") startMinecraftBot();
+  }, 30_000);
 }
 
 let discord;
