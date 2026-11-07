@@ -112,7 +112,10 @@ const lpFailure = new RegExp(process.env.LP_FAILURE_REGEX || "(?:error|unknown g
 
 app.post("/api/store/link/start", (req, res) => {
   const username = cleanText(req.body?.username, 16);
-  if (!validPlayerName(username)) return res.status(400).json({ error: "Geçerli Minecraft kullanıcı adı gir." });
+  if (!validPlayerName(username)) return res.status(400).json({ error: "Geçerli bir Minecraft kullanıcı adı gir." });
+  if (!mcBot?.player || botState !== "online") {
+    return res.status(503).json({ error: "Mağaza şu anda kullanılamıyor: MorCraftAi sunucuya bağlı değil. Önce Aternos sunucusunu açıp botun çevrimiçi olmasını bekle." });
+  }
   const code = makeLinkCode();
   linkChallenges.set(code, { username: username.toLowerCase(), expires: Date.now() + 5 * 60_000, verified: false });
   return res.json({ code, expiresInSeconds: 300 });
