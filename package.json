@@ -17,6 +17,6 @@
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "express-rate-limit": "^8.1.0",
-    "mineflayer": "^4.39.0"
+    "mineflayer": "npm:@wp2508/mineflayer@^4.42.7"
   }
 }
